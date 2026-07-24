@@ -8,13 +8,13 @@ console.log('[firebase-messaging-sw.js] service worker booted', {
 
 // Firebase configuration - MUST MATCH YOUR firebase.ts CONFIG
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
-  measurementId: "YOUR_MEASUREMENT_ID"
+  apiKey: "AIzaSyAc8V0rPcrbIbnCdCKD1w8V11Eyipwmi3k",
+  authDomain: "vibely-96e06.firebaseapp.com",
+  projectId: "vibely-96e06",
+  storageBucket: "vibely-96e06.firebasestorage.app",
+  messagingSenderId: "831588783044",
+  appId: "1:831588783044:web:98451411d31a8497ad8a91",
+  measurementId: "G-XXGW7P7CP7"
 };
 
 // Initialize Firebase app
@@ -27,17 +27,27 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Received background message:', payload);
 
-const notificationTitle =
-  payload.data?.title || "New Notification";
+  // Check if notification is already handled by browser
+  if (payload.notification) {
+    // Browser automatically shows it, so don't show manually
+    // But make sure data is attached
+    return;
+  }
 
-const notificationOptions = {
-  body:
-    payload.data?.body || "You have a new notification",
+  // Get title and body from payload
+  const notificationTitle =
+    payload.data?.title ||
+    "New Notification";
+
+  const notificationOptions = {
+    body:
+      payload.data?.body ||
+      "You have a new notification",
     icon: '/logo.png',
     badge: '/badge.png',
     tag: payload.data?.notificationId || 'default',
     data: {
-      url: payload.fcmOptions?.link || '/',
+      url: payload.fcmOptions?.link || payload.data?.link || '/',
       ...payload.data,
     },
     requireInteraction: false,

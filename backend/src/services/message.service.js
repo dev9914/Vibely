@@ -6,6 +6,7 @@ import {
   emitToUser,
   isUserOnline,
 } from "../socket/presence.registry.js";
+import { enqueueNotificationJob } from "../../queues/notification.queue.js";
 
 const MESSAGE_LIMIT = 30;
 const USER_SELECT = "username fullName avatar";
@@ -173,6 +174,24 @@ export const sendMessage = async ({
       lastMessage: conversation.lastMessage,
       unreadCount: 0,
     });
+  }
+
+  // Send push notification for new chat message
+  try {
+    const sender = await User.findById(senderId).select("username fullName avatar");
+    await enqueueNotificationJob(receiverId, {
+      sender: senderId,
+      type: "message",
+      title: `${sender?.username || "Someone"} sent you a message`,
+      message: trimmed || (attachments[0]?.type === "image" ? "📷 Photo" : "Attachment"),
+      actionUrl: `/chat/${senderId}`,
+      relatedResource: {
+        resourceType: "user",
+        resourceId: senderId,
+      },
+    });
+  } catch (error) {
+    console.error("Error sending chat notification:", error);
   }
 
   return payload;

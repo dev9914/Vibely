@@ -164,38 +164,34 @@ export const useNotifications = (): UseNotificationsReturn => {
   const listenToForeground = useCallback((): void => {
     console.log('[useNotifications] listenToForeground() attaching listener');
 
-    onMessageListener()
-      .then((payload: FcmForegroundPayload) => {
-        console.log('📬 Foreground notification received:', payload);
-        
-        const title = payload.notification?.title || 'New Notification';
-        const body = payload.notification?.body || '';
-        
-        // Show toast notification
-        toast(title, {
-          description: body,
-          action: payload.fcmOptions?.link ? {
-            label: 'View',
-            onClick: () => {
-              window.location.href = payload.fcmOptions?.link || '/';
-            }
-          } : undefined,
-          duration: 5000,
-        });
-
-        // Play notification sound (optional)
-        try {
-          const audio = new Audio('/notification-sound.mp3');
-          audio.play().catch(() => {
-            // Silently fail if sound can't play
-          });
-        } catch {
-          // Ignore sound errors
-        }
-      })
-      .catch((err: unknown) => {
-        console.error('Error in onMessageListener:', err);
+    onMessageListener((payload: FcmForegroundPayload) => {
+      console.log('📬 Foreground notification received:', payload);
+      
+      const title = payload.notification?.title || payload.data?.title || 'New Notification';
+      const body = payload.notification?.body || payload.data?.body || '';
+      
+      // Show toast notification
+      toast(title, {
+        description: body,
+        action: payload.fcmOptions?.link || payload.data?.link ? {
+          label: 'View',
+          onClick: () => {
+            window.location.href = (payload.fcmOptions?.link || payload.data?.link) as string || '/';
+          }
+        } : undefined,
+        duration: 5000,
       });
+
+      // Play notification sound (optional)
+      try {
+        const audio = new Audio('/notification-sound.mp3');
+        audio.play().catch(() => {
+          // Silently fail if sound can't play
+        });
+      } catch {
+        // Ignore sound errors
+      }
+    });
   }, []);
 
   // Auto-register on mount if permission already granted

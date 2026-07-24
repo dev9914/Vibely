@@ -27,12 +27,16 @@ export const sendPushNotification = async (token, payload) => {
 
     const message = {
       token,
+      // Include both notification and data for reliable delivery
+      notification: {
+        title: payload.title,
+        body: payload.body,
+      },
       data: {
         ...processedData,
         title: payload.title,
         body: payload.body,
       },
-
       webpush: {
         fcmOptions: {
           link: payload.link || "/",
@@ -97,16 +101,25 @@ export const sendMulticastNotification = async (tokens, payload) => {
     }
 
     const message = {
-      data: processedData,
-      webpush: {
-        fcmOptions: {
-          link: payload.link || "/",
-        },
+    // Include both notification and data for reliable delivery
+    notification: {
+      title: payload.title,
+      body: payload.body,
+    },
+    data: {
+      ...processedData,
+      title: payload.title,
+      body: payload.body,
+    },
+    webpush: {
+      fcmOptions: {
+        link: payload.link || "/",
       },
-      tokens,
-    };
+    },
+    tokens,
+  };
 
-    console.log("[fcm.service.js] sendMulticastNotification() sending data-only payload", {
+    console.log('[fcm.service.js] sendMulticastNotification() sending payload with notification and data', {
       tokenCount: tokens.length,
       dataKeys: Object.keys(processedData),
       link: payload.link || "/",
@@ -172,10 +185,10 @@ export const sendPushToUser = async (userId, payload) => {
     const activeTokens =
       user.fcmTokens?.filter((t) => t.isActive && t.token) || [];
 
-    console.log("===== ACTIVE FCM TOKENS =====");
+    console.log('===== ACTIVE FCM TOKENS =====');
     console.log(activeTokens);
-    console.log("Count:", activeTokens.length);
-    console.log("=============================");
+    console.log('Count:', activeTokens.length);
+    console.log('==============================');
 
     if (activeTokens.length === 0) {
       console.log(`ℹ️  No active FCM tokens for user ${userId}`);
@@ -218,41 +231,6 @@ export const sendPushToUser = async (userId, payload) => {
     };
   } catch (error) {
     console.error("❌ Error sending push to user:", error);
-    throw error;
-  }
-};
-
-/**
- * Send push notification to multiple users
- * @param {Array<String>} userIds - Array of user IDs
- * @param {Object} payload - Notification payload
- * @returns {Promise<Object>} - Send results
- */
-export const sendPushToMultipleUsers = async (userIds, payload) => {
-  try {
-    console.log(`🔔 Sending push to ${userIds.length} users`);
-
-    const results = await Promise.allSettled(
-      userIds.map((userId) => sendPushToUser(userId, payload)),
-    );
-
-    const successCount = results.filter(
-      (r) => r.status === "fulfilled" && r.value.success,
-    ).length;
-    const failureCount = results.filter(
-      (r) => r.status === "rejected" || !r.value.success,
-    ).length;
-
-    console.log(`✅ Sent to ${successCount} users, ${failureCount} failed`);
-
-    return {
-      success: successCount > 0,
-      successCount,
-      failureCount,
-      results,
-    };
-  } catch (error) {
-    console.error("❌ Error sending push to multiple users:", error);
     throw error;
   }
 };

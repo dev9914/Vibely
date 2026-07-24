@@ -119,20 +119,18 @@ export const getFCMToken = async (): Promise<string | null> => {
 
 /**
  * Listen for foreground messages
- * @returns {Promise} Promise that resolves with message payload
+ * @param callback Function to call when a new message is received
  */
-export const onMessageListener = (): Promise<any> => {
-  return new Promise((resolve) => {
-    if (!messaging) {
-      console.warn('⚠️  Firebase messaging not initialized');
-      return;
-    }
+export const onMessageListener = (callback: (payload: any) => void): void => {
+  if (!messaging) {
+    console.warn("⚠️  Firebase messaging not initialized");
+    return;
+  }
 
-    console.log('[firebase.ts] onMessage listener attached');
-    onMessage(messaging, (payload) => {
-      console.log('[firebase.ts] onMessage payload received:', payload);
-      resolve(payload);
-    });
+  console.log("[firebase.ts] onMessage listener attached");
+  onMessage(messaging, (payload) => {
+    console.log("[firebase.ts] onMessage payload received:", payload);
+    callback(payload);
   });
 };
 
