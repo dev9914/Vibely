@@ -12,6 +12,7 @@ import { setCredentials } from '../store/authSlice'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { AuthLayout, SocialLoginButton } from '../components/auth'
+import { storeAccessTokenFromAuthResponse } from '../lib/authToken'
 
 /**
  * SignIn Page
@@ -54,6 +55,11 @@ const SignIn = () => {
       const result = await login(data).unwrap()
       
       if (result?.user) {
+        // ⚡ SYNC token save BEFORE navigate — eliminates race where
+        //    onQueryStarted (async) runs after sync navigation and
+        //    getUserDetails fires with no token in localStorage.
+        storeAccessTokenFromAuthResponse(result)
+
         dispatch(setCredentials({
           user: result.user,
         }))

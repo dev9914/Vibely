@@ -12,6 +12,7 @@ import { setCredentials } from '../store/authSlice'
 import { Eye, EyeOff, Loader2, User, X, Check } from 'lucide-react'
 import { useState, useRef } from 'react'
 import { AuthLayout, SocialLoginButton } from '../components/auth'
+import { storeAccessTokenFromAuthResponse } from '../lib/authToken'
 
 /**
  * SignUp Page
@@ -96,10 +97,12 @@ const SignUp = () => {
       const result = await register(formData).unwrap()
 
       if (result?.user) {
+        // ⚡ SYNC token save BEFORE navigate — prevents race with post-nav queries
+        storeAccessTokenFromAuthResponse(result)
+
         dispatch(setCredentials({
           user: result.user,
         }))
-
         toast('Account created', {
           description: `Welcome to Vibely, ${result.user.username}!`,
         })
