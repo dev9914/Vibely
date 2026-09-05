@@ -1,57 +1,80 @@
-import mongoose from 'mongoose';
-import { Schema } from 'mongoose';
+import mongoose from "mongoose";
+import { Schema } from "mongoose";
+
+export const SOCIAL_NOTIFICATION_TYPES = [
+  "like",
+  "comment",
+  "follow",
+  "story_like",
+  "mention",
+];
 
 const NotificationSchema = new Schema(
   {
-    recipient: {
+    receiver: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
-      index: true, // Index for faster queries
+      index: true,
     },
-    sender: {
+    actor: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
+    },
+    // Stores grouped actors for like/comment/story-like notifications.
+    actors: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    actorCount: {
+      type: Number,
+      default: 1,
+      min: 1,
     },
     type: {
       type: String,
-      enum: ['like', 'comment', 'follow', 'message', 'mention', 'reply', 'comment_like', 'story', 'tag'],
+      enum: [...SOCIAL_NOTIFICATION_TYPES, "message"],
       required: true,
+      index: true,
+    },
+    relatedPost: {
+      type: Schema.Types.ObjectId,
+      ref: "Post",
+      default: null,
+      index: true,
+    },
+    relatedStory: {
+      type: Schema.Types.ObjectId,
+      ref: "Story",
+      default: null,
       index: true,
     },
     title: {
       type: String,
-      required: true,
       trim: true,
+      default: "",
     },
     message: {
       type: String,
-      required: true,
       trim: true,
-    },
-    isRead: {
-      type: Boolean,
-      default: false,
-      index: true, // Index for unread queries
-    },
-    readAt: {
-      type: Date,
-      default: null,
+      default: "",
     },
     actionUrl: {
       type: String,
       trim: true,
       default: "",
     },
-    relatedResource: {
-      resourceType: {
-        type: String,
-        enum: ['post', 'comment', 'user', 'message'],
-      },
-      resourceId: {
-        type: String,
-      },
+    isRead: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    readAt: {
+      type: Date,
+      default: null,
     },
     metadata: {
       type: Schema.Types.Mixed,
@@ -60,36 +83,46 @@ const NotificationSchema = new Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
-// Compound index for efficient queries (recipient + isRead + createdAt)
-NotificationSchema.index({ recipient: 1, isRead: 1, createdAt: -1 });
+NotificationSchema.index({ receiver: 1, isRead: 1, updatedAt: -1, _id: -1 });
+NotificationSchema.index({ receiver: 1, type: 1, relatedPost: 1, relatedStory: 1 });
+NotificationSchema.index({ actor: 1, receiver: 1, type: 1 });
 
-// Virtual for populating sender details
-NotificationSchema.virtual('senderDetails', {
-  ref: 'User',
-  localField: 'sender',
-  foreignField: '_id',
-  justOne: true,
+NotificationSchema.virtual("sender").get(function senderAlias() {
+  return this.actor;
 });
 
-// Ensure virtuals are included when converting to JSON
-NotificationSchema.set('toJSON', { virtuals: true });
-NotificationSchema.set('toObject', { virtuals: true });
+NotificationSchema.virtual("recipient").get(function recipientAlias() {
+  return this.receiver;
+});
 
-// Static method to get unread count
-NotificationSchema.statics.getUnreadCount = async function(userId) {
-  return await this.countDocuments({ recipient: userId, isRead: false });
+NotificationSchema.set("toJSON", { virtuals: true });
+NotificationSchema.set("toObject", { virtuals: true });
+
+NotificationSchema.statics.getUnreadCount = async function getUnreadCount(
+  userId,
+  types = SOCIAL_NOTIFICATION_TYPES,
+) {
+  return this.countDocuments({
+    receiver: userId,
+    type: { $in: types },
+    isRead: false,
+  });
 };
 
-// Static method to mark all as read
-NotificationSchema.statics.markAllAsRead = async function(userId) {
+NotificationSchema.statics.markAllAsRead = async function markAllAsRead(
+  userId,
+  types = SOCIAL_NOTIFICATION_TYPES,
+) {
   const now = new Date();
-  return await this.updateMany(
-    { recipient: userId, isRead: false },
-    { $set: { isRead: true, readAt: now } }
+  return this.updateMany(
+    { receiver: userId, type: { $in: types }, isRead: false },
+    { $set: { isRead: true, readAt: now } },
   );
 };
 
-export const Notification = mongoose.models.Notification || mongoose.model('Notification', NotificationSchema);
+export const Notification =
+  mongoose.models.Notification ||
+  mongoose.model("Notification", NotificationSchema);

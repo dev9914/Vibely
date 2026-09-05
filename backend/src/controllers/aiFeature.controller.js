@@ -2,40 +2,13 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { GoogleGenAI } from "@google/genai";
 
-import dotenv from "dotenv";
-dotenv.config();
+import "../config/env.js";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
-
-export const generateCaptionsFromImage = asyncHandler(async (req, res) => {
-  const { imageUrl } = req.body;
-
-  if (!imageUrl) {
-    return res.status(400).json({
-      message: "Image URL is required",
-    });
-  }
-try {
-  const response = await ai.models.generateContent({
-    model: "gemini-flash-latest",
-
-    contents: [
-      {
-        role: "user",
-
-        parts: [
-          {
-            fileData: {
-              fileUri: imageUrl,
-              mimeType: "image/jpeg",
-            },
-          },
-
-          {
-            text: `
+const captionPrompt = `
 You are a professional Instagram content creator.
 
 Look at this image.
@@ -61,7 +34,67 @@ Format:
 4. caption
 
 5. caption
-`,
+`;
+
+const downloadImage = async (imageUrl) => {
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(imageUrl);
+  } catch {
+    throw new Error("Invalid image URL");
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    throw new Error("Image URL must use HTTP or HTTPS");
+  }
+
+  const imageResponse = await fetch(parsedUrl);
+  if (!imageResponse.ok) {
+    throw new Error(`Image download failed with status ${imageResponse.status}`);
+  }
+
+  const contentType = imageResponse.headers.get("content-type")?.split(";")[0];
+  if (!contentType?.startsWith("image/")) {
+    throw new Error("Image URL did not return an image");
+  }
+
+  const imageBytes = Buffer.from(await imageResponse.arrayBuffer());
+  return {
+    mimeType: contentType,
+    data: imageBytes.toString("base64"),
+  };
+};
+
+
+export const generateCaptionsFromImage = asyncHandler(async (req, res) => {
+  const { imageUrl } = req.body;
+
+  if (!imageUrl) {
+    return res.status(400).json({
+      message: "Image URL is required",
+    });
+  }
+try {
+  const image = await downloadImage(imageUrl);
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3.6-flash",
+
+    contents: [
+      {
+        role: "user",
+
+        parts: [
+          {
+            inlineData: {
+              mimeType: image.mimeType,
+              data: image.data,
+            },
+          },
+
+          {
+            text: captionPrompt,
           },
         ],
       },
@@ -69,7 +102,7 @@ Format:
   });
 
 
-  const text = response.text;
+  const text = response.text || "";
 
   const captions = text
     .split("\n")
@@ -86,10 +119,13 @@ Format:
   console.error(error);
   console.error("==================================");
 
-  return res.status(500).json({
+  return res.status(error?.status === 403 ? 502 : 500).json({
     success: false,
     message: error.message,
-    error,
+    error: {
+      name: error.name,
+      status: error.status,
+    },
   });
 }
 });

@@ -1,4 +1,5 @@
 import { api } from './api';
+import { storeAccessTokenFromAuthResponse } from '@/lib/authToken';
 
 /**
  * User API Service
@@ -75,8 +76,7 @@ export interface RegisterRequest {
  */
 export interface AuthResponse {
   user: User;
-  accessToken: string;
-  refreshToken: string;
+  accessToken?: string;
 }
 
 export interface UpdateProfileRequest {
@@ -94,9 +94,19 @@ export const userApi = api.injectEndpoints({
     /**
      * Get current authenticated user details
      */
-    getCurrentUser: builder.query<UserResponse, void>({
+    getCurrentUser: builder.query<User, void>({
       query: () => '/users/getuserdetails',
       providesTags: ['User'],
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(userApi.endpoints.getSocketToken.initiate(undefined, {
+            forceRefetch: true,
+          }));
+        } catch {
+          // handled by caller
+        }
+      },
     }),
     
     /**
@@ -109,6 +119,14 @@ export const userApi = api.injectEndpoints({
         body: credentials,
       }),
       invalidatesTags: ['User'],
+      async onQueryStarted(_arg, { queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          storeAccessTokenFromAuthResponse(data);
+        } catch {
+          // handled by caller
+        }
+      },
     }),
     
     /**
@@ -120,6 +138,26 @@ export const userApi = api.injectEndpoints({
         method: 'POST',
         body: formData,
       }),
+      async onQueryStarted(_arg, { queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          storeAccessTokenFromAuthResponse(data);
+        } catch {
+          // handled by caller
+        }
+      },
+    }),
+
+    getSocketToken: builder.query<{ accessToken: string }, void>({
+      query: () => '/users/socket-token',
+      async onQueryStarted(_arg, { queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          storeAccessTokenFromAuthResponse(data);
+        } catch {
+          // handled by caller
+        }
+      },
     }),
     
     /**
@@ -156,7 +194,7 @@ export const userApi = api.injectEndpoints({
       // Optimistic update
       async onQueryStarted(userId, { dispatch, queryFulfilled, getState }) {
         const state: any = getState();
-        const currentUserId = state.auth.userData?._id;
+        const currentUserId = state.auth.user?._id;
         
         // Update user profile cache
         const patchResult = dispatch(
@@ -358,6 +396,7 @@ updateCoverImage: builder.mutation<UserResponse, FormData>({
         url: '/users/logout',
         method: 'POST',
       }),
+      invalidatesTags: ['User'],
     }),
   }),
 });
@@ -373,6 +412,7 @@ updateCoverImage: builder.mutation<UserResponse, FormData>({
  */
 export const {
   useGetCurrentUserQuery,
+  useGetSocketTokenQuery,
   useLoginMutation,
   useRegisterMutation,
   useGetAllUsersQuery,

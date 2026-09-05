@@ -1,11 +1,12 @@
 import {v2 as cloudinary} from "cloudinary"
 import fs from "fs"
+import "../config/env.js";
 
 
 cloudinary.config({ 
-  cloud_name: "duugiiwo0", 
-  api_key: "818123743591333",
-  api_secret: "aQWgm4H_4ytCMOsPk0SJ51XeQbk"
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
 // const uploadOnCloudinary = async (localFilePath) => {
@@ -29,11 +30,13 @@ cloudinary.config({
 // }
 
 const uploadOnCloudinary = async (localFilePaths) => {
+    const paths = Array.isArray(localFilePaths) ? localFilePaths : [];
+
     try {
-        if (!localFilePaths || localFilePaths.length === 0) return null; // Ensure there are files to upload
+        if (paths.length === 0) return null;
 
         // Map over the array of file paths and upload each file
-        const uploadPromises = localFilePaths.map(async (filePath) => {
+        const uploadPromises = paths.map(async (filePath) => {
             // Upload each file to Cloudinary
             const response = await cloudinary.uploader.upload(filePath, {
                 resource_type: "auto",
@@ -51,7 +54,15 @@ const uploadOnCloudinary = async (localFilePaths) => {
 
     } catch (error) {
         // Clean up: If an error occurs, remove all files
-        localFilePaths.forEach((filePath) => fs.unlinkSync(filePath)); // Delete local files
+        paths.forEach((filePath) => {
+            try {
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            } catch {
+                // Ignore cleanup errors while handling the upload failure.
+            }
+        });
         return null;
     }
 };

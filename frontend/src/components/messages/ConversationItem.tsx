@@ -5,7 +5,12 @@ import { cn } from "@/lib/utils";
 import { formatMessageTime } from "@/lib/date";
 import { Conversation } from "@/services/messageApi";
 import { useSelector } from "react-redux";
-import { selectOnlineUsers, selectPresence, selectTypingByConversation } from "@/store/messagingSlice";
+import {
+  selectIsUserOnline,
+  selectUserLastSeen,
+  selectTypingByConversation,
+} from "@/store/messagingSlice";
+import type { RootState } from "@/store/store";
 
 interface ConversationItemProps {
   conversation: Conversation;
@@ -14,13 +19,16 @@ interface ConversationItemProps {
 
 export function ConversationItem({ conversation, isActive = false }: ConversationItemProps) {
   const chatUser = conversation.user;
-  const onlineUsers = useSelector(selectOnlineUsers);
-  const presence = useSelector(selectPresence);
   const typingByConversation = useSelector(selectTypingByConversation);
+  const isOnline = useSelector((state: RootState) =>
+    selectIsUserOnline(state, chatUser._id),
+  );
+  const liveLastSeen = useSelector((state: RootState) =>
+    selectUserLastSeen(state, chatUser._id),
+  );
 
-  const isOnline = onlineUsers.includes(chatUser._id);
   const isTyping = !!typingByConversation[conversation._id];
-  const lastSeen = presence[chatUser._id]?.lastSeen || conversation.lastSeen;
+  const lastSeen = liveLastSeen || conversation.lastSeen;
 
   const preview = isTyping
     ? "typing..."

@@ -11,6 +11,7 @@ import SignIn from '@/pages/SignIn'
 import ForeignProfile from '@/pages/ForeignProfile'
 import Explore from '@/pages/Explore'
 import UserPost from '@/pages/UserPost'
+import Saved from '@/pages/Saved'
 import Chat from '@/pages/Chat'
 import Messages from '@/pages/Messages'
 
@@ -22,41 +23,42 @@ import ProtectedRoutes from '@/components/ProtectedRoutes'
 import { useGetCurrentUserQuery } from '@/services/userApi'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useMessagingSocket } from '@/hooks/useMessagingSocket'
-import { selectIsAuthenticated, setUser, setInitialized } from '@/store/authSlice'
+import { useNotificationSocket } from '@/hooks/useNotificationSocket'
+import { logout as logoutAuth, selectIsAuthenticated, selectIsLoading, setUser, setLoading } from '@/store/authSlice'
 import MessageHome from './components/messages/MessageHome'
 import MessagesLayout from './components/layout/MessagesLayout'
 
 function App() {
   const dispatch = useDispatch()
   
-  // Use Redux state for auth
   const isAuthenticated = useSelector(selectIsAuthenticated)
+  const authLoading = useSelector(selectIsLoading)
   
-  // Get current user with RTK Query
-  const { data: userData, isSuccess } = useGetCurrentUserQuery(undefined, {
-    skip: !isAuthenticated
-  })
-
-  console.log({
-  isAuthenticated,
-  isSuccess,
-  userData,
-});
+  const { data: userData, isSuccess, isError } = useGetCurrentUserQuery(undefined)
   
-  const user = userData?.user || userData || {}
+  const user = userData || {}
 
   // Set dark mode on html element
   useEffect(() => {
     document.documentElement.classList.add('dark')
   }, [])
 
-  // Update Redux state when user data is fetched
   useEffect(() => {
-if (isSuccess && userData) {
-    dispatch(setUser(userData))
-}
-    dispatch(setInitialized(true))
-  }, [isSuccess, userData, dispatch])
+    if (!authLoading) {
+      return
+    }
+
+    if (isSuccess && userData) {
+      dispatch(setUser(userData))
+      dispatch(setLoading(false))
+      return
+    }
+
+    if (isError) {
+      dispatch(logoutAuth())
+      dispatch(setLoading(false))
+    }
+  }, [authLoading, isSuccess, isError, userData, dispatch])
 
   // Initialize notifications
   const {
@@ -68,6 +70,7 @@ if (isSuccess && userData) {
 
   // Global messaging socket (presence, realtime inbox, read receipts)
   useMessagingSocket()
+  useNotificationSocket()
 
   // Auto-request notification permission when user logs in
   useEffect(() => {
@@ -125,6 +128,11 @@ if (isSuccess && userData) {
               <ForeignProfile/>
             </ProtectedRoutes>
           } />
+          <Route path='/search' element={
+            <ProtectedRoutes>
+              <Explore/>
+            </ProtectedRoutes>
+          } />
           <Route path='/explore' element={
             <ProtectedRoutes>
               <Explore/>
@@ -133,6 +141,11 @@ if (isSuccess && userData) {
           <Route path='/post/:postId' element={
             <ProtectedRoutes>
               <UserPost/>
+            </ProtectedRoutes>
+          } />
+          <Route path='/saved' element={
+            <ProtectedRoutes>
+              <Saved/>
             </ProtectedRoutes>
           } />
 <Route

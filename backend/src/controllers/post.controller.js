@@ -39,8 +39,6 @@ const createPost = asyncHandler(async (req, res) => {
       .json(new ApiResponse(500, {}, "Error creating post"));
   }
 
-  await deleteCache("feed:1:10");
-
   res
     .status(201)
     .json(new ApiResponse(201, { post }, "images uploaded successfully"));
@@ -61,7 +59,6 @@ const addLike = asyncHandler(async (req, res) => {
     post.likecount = post.likes.length;
     const updatedPost = await post.save();
     await deleteCache(`post:${postId}`);
-    await deleteCache("feed:1:10");
     return res
       .status(200)
       .json(
@@ -76,7 +73,6 @@ const addLike = asyncHandler(async (req, res) => {
     post.likecount = post.likes.length;
     const updatedPost = await post.save();
     await deleteCache(`post:${postId}`);
-    await deleteCache("feed:1:10");
 
     // Send notification to post owner (if not self-like)
     if (post.userId.toString() !== userId.toString()) {
@@ -137,7 +133,6 @@ const addComment = asyncHandler(async (req, res) => {
   post.commentcount = post.comments.length;
   const updatedpost = await post.save();
   await deleteCache(`post:${postId}`);
-  await deleteCache("feed:1:10");
 
   // Send notification to post owner (if not self-comment)
   if (post.userId.toString() !== req.user._id.toString()) {
@@ -163,8 +158,72 @@ const addComment = asyncHandler(async (req, res) => {
     .json(new ApiResponse(201, { updatedpost }, "comment added successfully"));
 });
 
+const POSTS_FIRST_PAGE_MIN = 15;
+
+const _hydrateFeedPosts = async (posts, currentUserId, feedType) => {
+  if (!posts.length) return [];
+  const hydrated = await Post.aggregate([
+    { $match: { _id: { $in: posts.map((p) => p._id) } } },
+    {
+      $lookup: {
+        from: "users",
+        localField: "userId",
+        foreignField: "_id",
+        as: "_author",
+        pipeline: [
+          {
+            $project: {
+              _id: 1,
+              username: 1,
+              fullName: 1,
+              avatar: 1,
+            },
+          },
+        ],
+      },
+    },
+    {
+      $lookup: {
+        from: "savedposts",
+        let: { postId: "$_id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$userId", currentUserId] },
+                  { $eq: ["$postId", "$$postId"] },
+                ],
+              },
+            },
+          },
+          { $limit: 1 },
+          { $project: { _id: 1 } },
+        ],
+        as: "_savedByMe",
+      },
+    },
+    { $unwind: { path: "$_author", preserveNullAndEmptyArrays: true } },
+    {
+      $addFields: {
+        author: {
+          _id: "$_author._id",
+          username: "$_author.username",
+          fullName: "$_author.fullName",
+          avatar: "$_author.avatar",
+        },
+        isLiked: { $in: [currentUserId, { $ifNull: ["$likes", []] }] },
+        isSaved: { $gt: [{ $size: { $ifNull: ["$_savedByMe", []] } }, 0] },
+        feedType,
+      },
+    },
+    { $project: { _author: 0, _savedByMe: 0 } },
+  ]);
+  const byId = new Map(hydrated.map((p) => [String(p._id), p]));
+  return posts.map((p) => byId.get(String(p._id))).filter(Boolean);
+};
+
 const getPost = asyncHandler(async (req, res) => {
-  // Extract page and limit from query params
   const parsedPage = Number.parseInt(req.query.page, 10);
   const parsedLimit = Number.parseInt(req.query.limit, 10);
   const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
@@ -172,66 +231,143 @@ const getPost = asyncHandler(async (req, res) => {
     ? Math.min(parsedLimit, 20)
     : 10;
 
-  // Calculate the number of posts to skip based on the page and limit
-  const skip = (page - 1) * limit;
-  const cacheKey = `feed:${page}:${limit}`;
-
-  // 1. Check cache first
-  const cachedFeed = await getCache(cacheKey);
-  if (cachedFeed) {
-    return res
-      .status(200)
-      .json(new ApiResponse(200, cachedFeed, "All posts fetched successfully"));
-  }
+  const currentUserId = req.user._id;
+  const following = Array.isArray(req.user.following) ? req.user.following : [];
+  const followingWithSelf = [...following, currentUserId];
 
   try {
-    // Get total count of posts
-    const totalPosts = await Post.countDocuments();
+    const followingMatch = { userId: { $in: followingWithSelf } };
+    const discoverMatch = { userId: { $nin: followingWithSelf } };
 
-    // Fetch posts with pagination and sorting by 'createdAt' descending
-    const posts = await Post.find()
-      .sort({ createdAt: -1, _id: -1 }) // Stable sort prevents duplicate/missing posts across pages
-      .skip(skip) // Skip the appropriate number of posts
-      .limit(limit); // Limit the results to the requested number
+    const [followingTotal, discoverTotal] = await Promise.all([
+      Post.countDocuments(followingMatch),
+      Post.countDocuments(discoverMatch),
+    ]);
+    const mergedTotal = followingTotal + discoverTotal;
 
-    // Calculate pagination metadata
-    const totalPages = Math.ceil(totalPosts / limit);
-    const hasMore = page < totalPages;
+    const effectiveFirstSize = Math.max(limit, POSTS_FIRST_PAGE_MIN);
 
-    // If no posts are found
-    if (!posts.length) {
-      return res.status(200).json(
-        new ApiResponse(
-          200,
-          {
-            posts: [],
-            currentPage: page,
-            totalPages: 0,
-            hasMore: false,
-          },
-          "No posts available.",
-        ),
-      );
+    let effectiveLimit;
+    let globalSkip;
+    if (page === 1) {
+      effectiveLimit = effectiveFirstSize;
+      globalSkip = 0;
+    } else {
+      effectiveLimit = limit;
+      globalSkip = effectiveFirstSize + (page - 2) * limit;
     }
 
-    // Send the paginated posts response with metadata
+    const followingWindowStart = Math.min(globalSkip, followingTotal);
+    const followingWindowEnd = Math.min(globalSkip + effectiveLimit, followingTotal);
+    const followingSkip = followingWindowStart;
+    const followingTake = Math.max(0, followingWindowEnd - followingWindowStart);
+    const discoverTake = Math.max(0, effectiveLimit - followingTake);
+    const discoverSkip = followingTotal >= globalSkip ? 0 : globalSkip - followingTotal;
+
+    let followingIds = [];
+    let discoverIds = [];
+
+    if (followingTake > 0) {
+      const rows = await Post.find(followingMatch, { _id: 1 })
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(followingSkip)
+        .limit(followingTake)
+        .lean();
+      followingIds = rows;
+    }
+    if (discoverTake > 0) {
+      const rows = await Post.find(discoverMatch, { _id: 1 })
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(discoverSkip)
+        .limit(discoverTake)
+        .lean();
+      discoverIds = rows;
+    }
+
+    const [hydratedFollowing, hydratedDiscover] = await Promise.all([
+      _hydrateFeedPosts(followingIds, currentUserId, "following"),
+      _hydrateFeedPosts(discoverIds, currentUserId, "discover"),
+    ]);
+
+    const posts = [...hydratedFollowing, ...hydratedDiscover];
+
+    const effectiveTotalPages = mergedTotal > 0
+      ? 1 + Math.max(0, Math.ceil((mergedTotal - effectiveFirstSize) / limit))
+      : 0;
+    const hasMore = (globalSkip + posts.length) < mergedTotal;
+
     const payload = {
       posts,
       currentPage: page,
-      totalPages,
+      totalPages: effectiveTotalPages,
       hasMore,
     };
 
-    // 2. Store in cache for 10 minutes
-    await setCache(cacheKey, payload, 600);
-
-    res
+    return res
       .status(200)
       .json(new ApiResponse(200, payload, "All posts fetched successfully"));
   } catch (error) {
     console.error(error);
     res.status(500).json(new ApiResponse(500, {}, "Error fetching posts"));
   }
+});
+
+const getLatestFeedHead = asyncHandler(async (req, res) => {
+  const currentUserId = req.user._id;
+  const following = Array.isArray(req.user.following) ? req.user.following : [];
+  const followingWithSelf = [...following, currentUserId];
+
+  const followingMatch = { userId: { $in: followingWithSelf } };
+  const discoverMatch = { userId: { $nin: followingWithSelf } };
+
+  const [
+    followingCount,
+    discoverCount,
+    followingHeadRaw,
+    discoverHeadRaw,
+  ] = await Promise.all([
+    Post.countDocuments(followingMatch),
+    Post.countDocuments(discoverMatch),
+    Post.findOne(followingMatch, { _id: 1, createdAt: 1 })
+      .sort({ createdAt: -1, _id: -1 })
+      .lean(),
+    Post.findOne(discoverMatch, { _id: 1, createdAt: 1 })
+      .sort({ createdAt: -1, _id: -1 })
+      .lean(),
+  ]);
+
+  const followingHead = followingHeadRaw
+    ? {
+        _id: String(followingHeadRaw._id),
+        createdAt: followingHeadRaw.createdAt,
+      }
+    : null;
+  const discoverHead = discoverHeadRaw
+    ? {
+        _id: String(discoverHeadRaw._id),
+        createdAt: discoverHeadRaw.createdAt,
+      }
+    : null;
+
+  const effectiveHead = followingHead ?? discoverHead ?? null;
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        followingHead,
+        discoverHead,
+        effectiveHead,
+        effectiveHeadId: effectiveHead?._id ?? null,
+        effectiveHeadCreatedAt: effectiveHead?.createdAt?.toISOString
+          ? effectiveHead.createdAt.toISOString()
+          : effectiveHead?.createdAt ?? null,
+        totalFollowingPosts: followingCount,
+        totalDiscoverPosts: discoverCount,
+      },
+      "Latest feed head fetched successfully",
+    ),
+  );
 });
 
 const checkIfLiked = asyncHandler(async (req, res) => {
@@ -372,6 +508,7 @@ export {
   addLike,
   addComment,
   getPost,
+  getLatestFeedHead,
   checkIfLiked,
   getuserPostById,
   getpostById,

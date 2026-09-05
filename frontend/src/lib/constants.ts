@@ -3,8 +3,10 @@
  * Centralized configuration for the entire app
  */
 
+import { getApiBaseUrl } from './apiConfig'
+
 // ========== API CONFIGURATION ==========
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
+export const API_URL = getApiBaseUrl()
 
 // ========== PAGINATION ==========
 export const POSTS_PER_PAGE = 10
@@ -34,6 +36,7 @@ export const SOCKET_EVENTS = {
   TYPING_START: 'typing:start',
   TYPING_STOP: 'typing:stop',
   PRESENCE_UPDATE: 'presence:update',
+  PRESENCE_REQUEST_SYNC: 'presence:request-sync',
   CONVERSATION_UPDATE: 'conversation:update',
   NEW_MESSAGE: 'newMessage',
   ONLINE_USERS: 'getOnlineUsers',
@@ -45,6 +48,7 @@ export const NOTIFICATION_TYPES = {
   LIKE: 'like',
   COMMENT: 'comment',
   FOLLOW: 'follow',
+  STORY_LIKE: 'story_like',
   MENTION: 'mention',
 } as const
 
@@ -64,8 +68,6 @@ export const ROUTES = {
 
 // ========== LOCAL STORAGE KEYS ==========
 export const STORAGE_KEYS = {
-  TOKEN: 'token',
-  TOKEN_EXPIRY: 'tokenExpiry',
   THEME: 'theme',
   USER_PREFERENCES: 'userPreferences',
 } as const

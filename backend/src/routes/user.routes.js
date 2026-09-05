@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { loginUser, registerUser, logoutUser, refreshAccessToken, getUserDetails, changeCurrentPassword,  
+import { loginUser, registerUser, logoutUser, refreshAccessToken, getSocketToken, getUserDetails, changeCurrentPassword,  
     updateUserAvatar, 
     updateUserCoverImage, 
     getUserChannelProfile, 
@@ -38,6 +38,7 @@ router.route('/getalluser').get(getAllUser)
 
 // Secured routes (require authentication)
 router.route("/logout").post(verifyJWT, logoutUser)
+router.route("/socket-token").get(verifyJWT, getSocketToken)
 router.route('/getuserdetails').get(verifyJWT, getUserDetails)
 router.route("/change-password").post(verifyJWT, validate(changePasswordSchema), changeCurrentPassword)
 router.route("/update-account").patch(verifyJWT, updateAccountDetails)
@@ -47,7 +48,7 @@ router.route("/cover-image").patch(verifyJWT, upload.single("coverImage"), updat
 router.route("/follow/:followedId").post(verifyJWT, addFollow)
 router.route("/unfollow/:unfollowedId").post(verifyJWT, unFollow)
 router.route("/checkifFollwed/:foreignId").get(verifyJWT, checkifFollwed)
-router.route("/followedlist").post(getFollowers)
+router.route("/followedlist").post(verifyJWT, getFollowers)
 
 // Unused routes (kept for future use)
 router.route("/c/:username").get(verifyJWT, getUserChannelProfile)

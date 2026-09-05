@@ -55,12 +55,20 @@ const UserSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "User"
     }],
+    blockedUsers: [{
+      type: Schema.Types.ObjectId,
+      ref: "User"
+    }],
+    mutedUsers: [{
+      type: Schema.Types.ObjectId,
+      ref: "User"
+    }],
     noOfFollower: {
-      type: String,
+      type: Number,
       default: 0
     },
     noOfFollowing: {
-      type: String,
+      type: Number,
       default: 0
     },
     bio: {
@@ -124,6 +132,9 @@ location: {
   { timestamps: true }
 );
 
+UserSchema.index({ username: 1, createdAt: -1 });
+UserSchema.index({ fullName: 1, createdAt: -1 });
+
 UserSchema.pre("save", async function (next) {
   if(!this.isModified("password")) return next();
 
@@ -141,7 +152,6 @@ UserSchema.methods.generateAccessToken = function(){
       _id: this._id,
       email: this.email,
       username: this.username,
-      role: this.role
     },
     process.env.ACCESS_TOKEN_SECRET,
     {

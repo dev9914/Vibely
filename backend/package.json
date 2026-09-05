@@ -8,7 +8,10 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "worker": "node queues/notification.worker.js",
-    "seed": "node scripts/seedDemoData.js"
+    "seed": "node scripts/seedDemoData.js",
+    "test:gemini": "node config/testGemini.js",
+    "test:socket": "node scripts/testSocket.js",
+    "test:presence": "node scripts/testPresenceRegistry.js"
   },
   "author": "devanand",
   "license": "ISC",
@@ -34,5 +37,8 @@
     "redis": "^6.1.0",
     "sharp": "^0.33.5",
     "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
   }
 }

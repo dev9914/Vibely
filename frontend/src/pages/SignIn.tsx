@@ -53,11 +53,9 @@ const SignIn = () => {
     try {
       const result = await login(data).unwrap()
       
-      if (result?.accessToken && result?.user) {
+      if (result?.user) {
         dispatch(setCredentials({
           user: result.user,
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
         }))
 
         toast('Welcome back', {

@@ -8,6 +8,7 @@ import {
   Bookmark,
   MoreHorizontal,
   BookmarkCheck,
+  Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -23,9 +24,15 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { openCommentDialog } from '@/store/commentSlice'
 import { RootState } from '@/store/store'
-import { useGetUserByIdQuery } from '@/services/userApi'
-import { useLikePostMutation, useCheckIfLikedQuery, useAddCommentMutation } from '@/services/postApi'
+import { useLikePostMutation, useAddCommentMutation, useSavePostMutation, useUnsavePostMutation } from '@/services/postApi'
 import { formatPostTime } from '@/lib/date'
+
+interface PostAuthor {
+  _id: string
+  username: string
+  fullName?: string
+  avatar: string
+}
 
 interface PostProps {
   postId: string
@@ -36,16 +43,21 @@ interface PostProps {
   commentcount: string | number
   created: string
   onCommentClick: () => void
+  author?: PostAuthor
+  isLiked?: boolean
+  isSaved?: boolean
+  feedType?: 'following' | 'discover'
 }
 
 /**
  * Post Component
- * 
+ *
  * Instagram-style post with:
  * - Sleek header with avatar and username
  * - High-quality image display
  * - Animated like, comment, share actions
  * - Interactive comment input
+ * - Discover ("Suggested for you") badge
  */
 const Post = ({
   postId,
@@ -56,60 +68,77 @@ const Post = ({
   commentcount,
   created,
   onCommentClick,
+  author,
+  isLiked: isLikedProp,
+  isSaved: isSavedProp,
+  feedType,
 }: PostProps) => {
   const dispatch = useDispatch()
   const [commentText, setCommentText] = useState('')
-  const [isBookmarked, setIsBookmarked] = useState(false)
   const [showFullCaption, setShowFullCaption] = useState(false)
-  
-  // Local state for optimistic updates
+
   const [localLiked, setLocalLiked] = useState<boolean | null>(null)
   const [localLikeCount, setLocalLikeCount] = useState(Number(likecount) || 0)
+  const [localSaved, setLocalSaved] = useState<boolean | null>(null)
+  const [saveBusy, setSaveBusy] = useState(false)
 
-  // Get current user for like animation
   const currentUser = useSelector((state: RootState) => state.auth.user)
 
-  // RTK Query hooks
-  const { data: userData } = useGetUserByIdQuery(userId)
-  const { data: likeData, isLoading: likeCheckLoading } = useCheckIfLikedQuery(postId)
   const [likePost, { isLoading: isLiking }] = useLikePostMutation()
   const [addComment, { isLoading: isCommenting }] = useAddCommentMutation()
+  const [savePost] = useSavePostMutation()
+  const [unsavePost] = useUnsavePostMutation()
 
-  // Sync local state with server state
   useEffect(() => {
-    if (likeData?.liked !== undefined && localLiked === null) {
-      setLocalLiked(likeData.liked)
+    if (isLikedProp !== undefined && localLiked === null) {
+      setLocalLiked(isLikedProp)
     }
-  }, [likeData?.liked, localLiked])
+  }, [isLikedProp, localLiked])
 
-  // Update like count when props change
   useEffect(() => {
     setLocalLikeCount(Number(likecount) || 0)
   }, [likecount])
 
-  const user = userData?.user || { username: '', avatar: '', _id: userId }
-  const isLiked = localLiked ?? likeData?.liked ?? false
+  useEffect(() => {
+    if (isSavedProp !== undefined && localSaved === null) {
+      setLocalSaved(isSavedProp)
+    } else if (isSavedProp !== undefined && !saveBusy) {
+      setLocalSaved(isSavedProp)
+    }
+  }, [isSavedProp, localSaved, saveBusy])
+
+  const user: PostAuthor = author
+    ? {
+        _id: author._id,
+        username: author.username,
+        fullName: author.fullName,
+        avatar: author.avatar,
+      }
+    : {
+        _id: typeof userId === 'string' ? userId : (userId as any)?._id ?? userId,
+        username: '',
+        avatar: '',
+      }
+  const isLiked = localLiked ?? isLikedProp ?? false
+  const isSaved = localSaved ?? isSavedProp ?? false
   const timeAgo = formatPostTime(created)
   const imageUrl = Array.isArray(postImage) ? postImage[0] : postImage
-  
-  // Truncate long captions
+
   const shouldTruncate = description && description.length > 100
-  const displayCaption = shouldTruncate && !showFullCaption 
-    ? `${description.slice(0, 100)}...` 
+  const displayCaption = shouldTruncate && !showFullCaption
+    ? `${description.slice(0, 100)}...`
     : description
 
   const handleLike = async () => {
     if (isLiking) return
-    
-    // Optimistic update
+
     const wasLiked = isLiked
     setLocalLiked(!wasLiked)
     setLocalLikeCount(prev => wasLiked ? prev - 1 : prev + 1)
-    
+
     try {
       await likePost(postId).unwrap()
     } catch (error) {
-      // Revert on error
       setLocalLiked(wasLiked)
       setLocalLikeCount(prev => wasLiked ? prev + 1 : prev - 1)
       console.error('Failed to like post:', error)
@@ -132,8 +161,24 @@ const Post = ({
     }
   }
 
-  const handleBookmark = () => {
-    setIsBookmarked(!isBookmarked)
+  const handleBookmark = async () => {
+    if (saveBusy) return
+    const wasSaved = isSaved
+    const nextSaved = !wasSaved
+    setLocalSaved(nextSaved)
+    setSaveBusy(true)
+    try {
+      if (nextSaved) {
+        await savePost(postId).unwrap()
+      } else {
+        await unsavePost(postId).unwrap()
+      }
+    } catch (error) {
+      setLocalSaved(wasSaved)
+      console.error('Failed to update saved state:', error)
+    } finally {
+      setSaveBusy(false)
+    }
   }
 
   const handleCommentClick = () => {
@@ -142,7 +187,14 @@ const Post = ({
   }
 
   return (
-    <article className="bg-card border border-border rounded-lg overflow-hidden">
+    <div className="space-y-2">
+      {feedType === 'discover' && (
+        <div className="flex items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <Sparkles className="h-3.5 w-3.5 text-primary/70" />
+          <span>Suggested for you</span>
+        </div>
+      )}
+      <article className="bg-card border border-border rounded-lg overflow-hidden">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
@@ -216,7 +268,7 @@ const Post = ({
               size="icon"
               className="h-10 w-10 hover:bg-transparent hover:opacity-60 transition-all"
               onClick={handleLike}
-              disabled={isLiking || likeCheckLoading}
+              disabled={isLiking}
             >
               <Heart
                 className={cn(
@@ -248,8 +300,9 @@ const Post = ({
             size="icon"
             className="h-10 w-10 hover:bg-transparent hover:opacity-60 transition-all"
             onClick={handleBookmark}
+            disabled={saveBusy}
           >
-            {isBookmarked ? (
+            {isSaved ? (
               <BookmarkCheck className="h-[26px] w-[26px] fill-foreground" />
             ) : (
               <Bookmark className="h-[26px] w-[26px]" />
@@ -354,6 +407,7 @@ placeholder:text-muted-foreground
         )}
       </div>
     </article>
+    </div>
   )
 }
 

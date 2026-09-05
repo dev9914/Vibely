@@ -40,8 +40,15 @@ export interface Post {
   commentcount: string | number;
   createdAt: string;
   updatedAt: string;
-  // Client-side computed
+  author?: {
+    _id: string;
+    username: string;
+    fullName: string;
+    avatar: string;
+  };
   isLiked?: boolean;
+  isSaved?: boolean;
+  feedType?: 'following' | 'discover';
 }
 
 export interface PostsResponse {
@@ -295,6 +302,111 @@ export const postApi = api.injectEndpoints({
       query: (postId) => `/post/checkifliked/${postId}`,
       providesTags: (_result, _error, postId) => [{ type: 'Post', id: `LIKE-${postId}` }],
     }),
+
+    /**
+     * Lightweight poll endpoint returning only the effective head of the feed
+     * (following-head or discover-head) plus counts.  Used by the "New Posts
+     * Available" banner to detect new posts without re-downloading the feed.
+     */
+    getLatestFeedHead: builder.query<
+      {
+        success: boolean;
+        followingHead: { _id: string; createdAt: string } | null;
+        discoverHead: { _id: string; createdAt: string } | null;
+        effectiveHead: { _id: string; createdAt: string } | null;
+        effectiveHeadId: string | null;
+        effectiveHeadCreatedAt: string | null;
+        totalFollowingPosts: number;
+        totalDiscoverPosts: number;
+      },
+      void
+    >({
+      query: () => '/post/feed/latest',
+    }),
+
+    getMySavedPosts: builder.query<PostsResponse, { page?: number; limit?: number }>({
+      query: ({ page = 1, limit = 30 }) => `/saved?page=${page}&limit=${limit}`,
+      providesTags: (result) =>
+        result?.posts
+          ? [
+              ...result.posts.map(({ _id }) => ({ type: 'Post' as const, id: `SAVED-${_id}` })),
+              { type: 'Post', id: 'SAVED-LIST' },
+            ]
+          : [{ type: 'Post', id: 'SAVED-LIST' }],
+      serializeQueryArgs: ({ endpointName }) => endpointName,
+      merge: (currentCache, newItems, { arg }) => {
+        if (arg.page === 1) {
+          return newItems;
+        }
+        return {
+          ...newItems,
+          posts: [...(currentCache?.posts || []), ...(newItems?.posts || [])],
+        };
+      },
+      forceRefetch({ currentArg, previousArg }) {
+        return currentArg?.page !== previousArg?.page;
+      },
+    }),
+
+    savePost: builder.mutation<{ success: boolean; saved: boolean }, string>({
+      query: (postId) => ({
+        url: `/saved/${postId}`,
+        method: 'POST',
+      }),
+      async onQueryStarted(postId, { dispatch, queryFulfilled }) {
+        const patchAllPosts = dispatch(
+          postApi.util.updateQueryData('getAllPosts', { page: 1 }, (draft) => {
+            const post = draft.posts.find((p) => p._id === postId);
+            if (post) post.isSaved = true;
+          })
+        );
+        const patchSavedList = dispatch(
+          postApi.util.updateQueryData('getMySavedPosts', { page: 1 }, (draft) => {
+            if (!draft.posts.some((p) => p._id === postId)) {
+              draft.hasMore = draft.posts.length > 0 ? draft.hasMore : draft.hasMore;
+            }
+          })
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patchAllPosts.undo();
+          patchSavedList.undo();
+        }
+      },
+      invalidatesTags: [{ type: 'Post', id: 'SAVED-LIST' }],
+    }),
+
+    unsavePost: builder.mutation<{ success: boolean; saved: boolean; removed: boolean }, string>({
+      query: (postId) => ({
+        url: `/saved/${postId}`,
+        method: 'DELETE',
+      }),
+      async onQueryStarted(postId, { dispatch, queryFulfilled }) {
+        const patchAllPosts = dispatch(
+          postApi.util.updateQueryData('getAllPosts', { page: 1 }, (draft) => {
+            const post = draft.posts.find((p) => p._id === postId);
+            if (post) post.isSaved = false;
+          })
+        );
+        const patchSavedList = dispatch(
+          postApi.util.updateQueryData('getMySavedPosts', { page: 1 }, (draft) => {
+            const wasIn = draft.posts.some((p) => p._id === postId);
+            draft.posts = draft.posts.filter((p) => p._id !== postId);
+            if (wasIn && draft.currentPage) {
+              draft.currentPage = draft.currentPage;
+            }
+          })
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patchAllPosts.undo();
+          patchSavedList.undo();
+        }
+      },
+      invalidatesTags: [{ type: 'Post', id: 'SAVED-LIST' }],
+    }),
   }),
 });
 
@@ -317,6 +429,10 @@ export const {
   useDeletePostMutation,
   useUpdatePostMutation,
   useCheckIfLikedQuery,
+  useGetLatestFeedHeadQuery,
+  useGetMySavedPostsQuery,
+  useSavePostMutation,
+  useUnsavePostMutation,
 } = postApi;
 
 export default postApi;

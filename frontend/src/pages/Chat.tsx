@@ -25,12 +25,12 @@ import {
 import { getMessageUserId } from "@/lib/messageUtils";
 import { setActiveChat } from "@/store/messagingSlice";
 import {
-  selectOnlineUsers,
-  selectPresence,
+  selectIsUserOnline,
+  selectUserLastSeen,
   selectTypingByConversation,
 } from "@/store/messagingSlice";
 import { formatMessageTime } from "@/lib/date";
-import type { AppDispatch } from "@/store/store";
+import type { AppDispatch, RootState } from "@/store/store";
 
 interface ChatProps {
   userId: string;
@@ -48,8 +48,6 @@ const Chat = ({ userId }: ChatProps) => {
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLoadingMoreRef = useRef(false);
 
-  const onlineUsers = useSelector(selectOnlineUsers);
-  const presence = useSelector(selectPresence);
   const typingByConversation = useSelector(selectTypingByConversation);
 
   const { data: userData } = useGetUserByIdQuery(receiverId!, { skip: !receiverId });
@@ -64,6 +62,14 @@ const Chat = ({ userId }: ChatProps) => {
   const user = userData?.user || null;
   const messages = messagesData?.messages ?? [];
   const conversationId = messagesData?.conversationId ?? null;
+
+  const isOnline = useSelector((state: RootState) =>
+    selectIsUserOnline(state, receiverId),
+  );
+  const lastSeen = useSelector((state: RootState) =>
+    selectUserLastSeen(state, receiverId),
+  );
+  const isTyping = conversationId ? !!typingByConversation[conversationId] : false;
 
   useEffect(() => {
     setHasMore(messagesData?.hasMore ?? false);
@@ -160,10 +166,6 @@ const Chat = ({ userId }: ChatProps) => {
       isLoadingMoreRef.current = false;
     }
   };
-
-  const isOnline = receiverId ? onlineUsers.includes(receiverId) : false;
-  const isTyping = conversationId ? !!typingByConversation[conversationId] : false;
-  const lastSeen = receiverId ? presence[receiverId]?.lastSeen : null;
 
   const statusText = isTyping
     ? "typing..."

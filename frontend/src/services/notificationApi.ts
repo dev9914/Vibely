@@ -1,18 +1,12 @@
-import { api } from './api';
+import { api } from "./api";
 
-/**
- * Notification API Service
- * 
- * Handles all notification-related endpoints including:
- * - Fetching notifications
- * - FCM token registration/deactivation
- * - Mark as read functionality
- * - Real-time notification updates
- */
+export const NOTIFICATIONS_PAGE_SIZE = 20;
+export const NOTIFICATION_FEED_ARG = {
+  page: 1,
+  limit: NOTIFICATIONS_PAGE_SIZE,
+};
 
-// ========== TYPES ==========
-
-export interface NotificationSender {
+export interface NotificationActor {
   _id: string;
   username: string;
   fullName: string;
@@ -21,18 +15,19 @@ export interface NotificationSender {
 
 export interface Notification {
   _id: string;
-  recipient: string;
-  sender: NotificationSender;
-  type: 'like' | 'comment' | 'follow' | 'message' | 'mention' | 'reply' | 'comment_like' | 'story' | 'tag';
+  actor: NotificationActor | null;
+  actors: NotificationActor[];
+  actorCount: number;
+  receiver: string;
+  type: "like" | "comment" | "follow" | "story_like" | "mention";
+  relatedPost: string | null;
+  relatedStory: string | null;
   title: string;
   message: string;
-  isRead: boolean;
-  readAt?: string;
   actionUrl: string;
-  relatedResource?: {
-    resourceType: 'post' | 'comment' | 'user' | 'message';
-    resourceId: string;
-  };
+  previewImage: string | null;
+  isRead: boolean;
+  readAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -41,11 +36,19 @@ export interface NotificationsResponse {
   success: boolean;
   notifications: Notification[];
   unreadCount: number;
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  hasMore: boolean;
+}
+
+export interface NotificationSummaryResponse {
+  unreadCount: number;
 }
 
 export interface RegisterTokenRequest {
   token: string;
-  platform?: 'web' | 'android' | 'ios' | 'desktop';
+  platform?: "web" | "android" | "ios" | "desktop";
   userAgent?: string;
 }
 
@@ -55,175 +58,226 @@ export interface RegisterTokenResponse {
   deviceId: string;
 }
 
-// ========== API ENDPOINTS ==========
+const patchNotificationSummary = (
+  dispatch: any,
+  updater: (draft: NotificationSummaryResponse) => void,
+) =>
+  dispatch(
+    notificationApi.util.updateQueryData(
+      "getNotificationSummary",
+      undefined,
+      updater,
+    ),
+  );
+
+const patchNotificationFeed = (
+  dispatch: any,
+  updater: (draft: NotificationsResponse) => void,
+) =>
+  dispatch(
+    notificationApi.util.updateQueryData(
+      "getNotifications",
+      NOTIFICATION_FEED_ARG,
+      updater,
+    ),
+  );
 
 export const notificationApi = api.injectEndpoints({
   endpoints: (builder) => ({
-    
-    /**
-     * Get all notifications for the current user
-     * Auto-refetches on focus/reconnect
-     */
-    getNotifications: builder.query<NotificationsResponse, void>({
-      query: () => '/notifications/my-notifications',
-      providesTags: ['Notification'],
-      // Poll for new notifications every 30 seconds (optional)
-      // pollingInterval: 30000,
+    getNotifications: builder.query<
+      NotificationsResponse,
+      { page?: number; limit?: number } | void
+    >({
+      query: (args) => {
+        const page = args?.page ?? 1;
+        const limit = args?.limit ?? NOTIFICATIONS_PAGE_SIZE;
+        return `/notifications/my-notifications?page=${page}&limit=${limit}`;
+      },
+      serializeQueryArgs: ({ endpointName }) => endpointName,
+      merge: (currentCache, newItems, { arg }) => {
+        const page = arg?.page ?? 1;
+
+        if (page <= 1) {
+          currentCache.success = newItems.success;
+          currentCache.notifications = newItems.notifications;
+          currentCache.unreadCount = newItems.unreadCount;
+          currentCache.currentPage = newItems.currentPage;
+          currentCache.totalPages = newItems.totalPages;
+          currentCache.totalItems = newItems.totalItems;
+          currentCache.hasMore = newItems.hasMore;
+          return;
+        }
+
+        const seenIds = new Set(currentCache.notifications.map((item) => item._id));
+        const mergedNotifications = [...currentCache.notifications];
+        for (const item of newItems.notifications) {
+          if (!seenIds.has(item._id)) {
+            mergedNotifications.push(item);
+            seenIds.add(item._id);
+          }
+        }
+
+        currentCache.success = newItems.success;
+        currentCache.notifications = mergedNotifications;
+        currentCache.unreadCount = newItems.unreadCount;
+        currentCache.currentPage = newItems.currentPage;
+        currentCache.totalPages = newItems.totalPages;
+        currentCache.totalItems = newItems.totalItems;
+        currentCache.hasMore = newItems.hasMore;
+      },
+      forceRefetch: ({ currentArg, previousArg }) =>
+        (currentArg?.page ?? 1) !== (previousArg?.page ?? 1) ||
+        (currentArg?.limit ?? NOTIFICATIONS_PAGE_SIZE) !==
+          (previousArg?.limit ?? NOTIFICATIONS_PAGE_SIZE),
+      providesTags: (result) =>
+        result?.notifications
+          ? [
+              ...result.notifications.map(({ _id }) => ({
+                type: "Notification" as const,
+                id: _id,
+              })),
+              { type: "Notification", id: "LIST" },
+            ]
+          : [{ type: "Notification", id: "LIST" }],
     }),
-    
-    /**
-     * Register FCM token for push notifications
-     */
+
+    getNotificationSummary: builder.query<NotificationSummaryResponse, void>({
+      query: () => "/notifications/my-notifications?page=1&limit=1",
+      transformResponse: (response: NotificationsResponse) => ({
+        unreadCount: response.unreadCount ?? 0,
+      }),
+      providesTags: [{ type: "Notification", id: "SUMMARY" }],
+    }),
+
     registerFCMToken: builder.mutation<RegisterTokenResponse, RegisterTokenRequest>({
       query: (body) => ({
-        url: '/notifications/register-token',
-        method: 'POST',
+        url: "/notifications/register-token",
+        method: "POST",
         body,
       }),
     }),
-    
-    /**
-     * Deactivate FCM token (on logout)
-     */
+
     deactivateFCMToken: builder.mutation<{ success: boolean }, { deviceId: string }>({
       query: (body) => ({
-        url: '/notifications/deactivate',
-        method: 'POST',
+        url: "/notifications/deactivate",
+        method: "POST",
         body,
       }),
     }),
-    
-    /**
-     * Mark a single notification as read
-     * Uses optimistic update for instant UI feedback
-     */
-    markNotificationAsRead: builder.mutation<{ success: boolean }, string>({
+
+    markNotificationAsRead: builder.mutation<
+      { notification: Notification },
+      string
+    >({
       query: (id) => ({
         url: `/notifications/${id}/read`,
-        method: 'PATCH',
+        method: "PATCH",
       }),
-      // Optimistic update - update UI immediately before server responds
       async onQueryStarted(id, { dispatch, queryFulfilled }) {
-        const patchResult = dispatch(
-          notificationApi.util.updateQueryData(
-            'getNotifications',
-            undefined,
-            (draft) => {
-              const notification = draft.notifications.find((n) => n._id === id);
-              if (notification && !notification.isRead) {
-                notification.isRead = true;
-                notification.readAt = new Date().toISOString();
-                draft.unreadCount = Math.max(0, draft.unreadCount - 1);
-              }
-            }
-          )
-        );
-        
+        const feedPatch = patchNotificationFeed(dispatch, (draft) => {
+          const notification = draft.notifications.find((n) => n._id === id);
+          if (notification && !notification.isRead) {
+            notification.isRead = true;
+            notification.readAt = new Date().toISOString();
+            draft.unreadCount = Math.max(0, draft.unreadCount - 1);
+          }
+        });
+
+        const summaryPatch = patchNotificationSummary(dispatch, (draft) => {
+          draft.unreadCount = Math.max(0, draft.unreadCount - 1);
+        });
+
         try {
           await queryFulfilled;
         } catch {
-          // Rollback optimistic update on error
-          patchResult.undo();
+          feedPatch.undo();
+          summaryPatch.undo();
         }
       },
-      invalidatesTags: ['Notification'],
     }),
-    
-    /**
-     * Mark all notifications as read
-     */
-    markAllNotificationsAsRead: builder.mutation<{ success: boolean }, void>({
+
+    markAllNotificationsAsRead: builder.mutation<
+      { success: boolean; modifiedCount: number },
+      void
+    >({
       query: () => ({
-        url: '/notifications/read-all',
-        method: 'PATCH',
+        url: "/notifications/read-all",
+        method: "PATCH",
       }),
-      // Optimistic update
       async onQueryStarted(_, { dispatch, queryFulfilled }) {
-        const patchResult = dispatch(
-          notificationApi.util.updateQueryData(
-            'getNotifications',
-            undefined,
-            (draft) => {
-              draft.notifications.forEach((notification) => {
-                if (!notification.isRead) {
-                  notification.isRead = true;
-                  notification.readAt = new Date().toISOString();
-                }
-              });
-              draft.unreadCount = 0;
-            }
-          )
-        );
-        
+        const now = new Date().toISOString();
+
+        const feedPatch = patchNotificationFeed(dispatch, (draft) => {
+          draft.notifications.forEach((notification) => {
+            notification.isRead = true;
+            notification.readAt = notification.readAt || now;
+          });
+          draft.unreadCount = 0;
+        });
+
+        const summaryPatch = patchNotificationSummary(dispatch, (draft) => {
+          draft.unreadCount = 0;
+        });
+
         try {
           await queryFulfilled;
         } catch {
-          patchResult.undo();
+          feedPatch.undo();
+          summaryPatch.undo();
         }
       },
-      invalidatesTags: ['Notification'],
     }),
-    
-    /**
-     * Delete a notification
-     */
+
     deleteNotification: builder.mutation<{ success: boolean }, string>({
       query: (id) => ({
         url: `/notifications/${id}`,
-        method: 'DELETE',
+        method: "DELETE",
       }),
-      // Optimistic update
       async onQueryStarted(id, { dispatch, queryFulfilled }) {
-        const patchResult = dispatch(
-          notificationApi.util.updateQueryData(
-            'getNotifications',
-            undefined,
-            (draft) => {
-              const index = draft.notifications.findIndex((n) => n._id === id);
-              if (index !== -1) {
-                const notification = draft.notifications[index];
-                if (!notification.isRead) {
-                  draft.unreadCount = Math.max(0, draft.unreadCount - 1);
-                }
-                draft.notifications.splice(index, 1);
-              }
-            }
-          )
-        );
-        
+        let unreadRemoved = false;
+
+        const feedPatch = patchNotificationFeed(dispatch, (draft) => {
+          const index = draft.notifications.findIndex((item) => item._id === id);
+          if (index === -1) return;
+
+          unreadRemoved = !draft.notifications[index].isRead;
+          draft.notifications.splice(index, 1);
+          if (unreadRemoved) {
+            draft.unreadCount = Math.max(0, draft.unreadCount - 1);
+          }
+        });
+
+        const summaryPatch = unreadRemoved
+          ? patchNotificationSummary(dispatch, (draft) => {
+              draft.unreadCount = Math.max(0, draft.unreadCount - 1);
+            })
+          : null;
+
         try {
           await queryFulfilled;
         } catch {
-          patchResult.undo();
+          feedPatch.undo();
+          summaryPatch?.undo();
         }
       },
-      invalidatesTags: ['Notification'],
     }),
-    
-    /**
-     * Send test notification (for debugging)
-     */
+
     sendTestNotification: builder.mutation<{ success: boolean }, void>({
       query: () => ({
-        url: '/notifications/test',
-        method: 'POST',
+        url: "/notifications/test",
+        method: "POST",
       }),
-      invalidatesTags: ['Notification'],
+      invalidatesTags: [
+        { type: "Notification", id: "LIST" },
+        { type: "Notification", id: "SUMMARY" },
+      ],
     }),
   }),
 });
 
-// ========== EXPORT HOOKS ==========
-
-/**
- * Auto-generated hooks for use in components
- * 
- * Usage:
- * const { data, isLoading, error } = useGetNotificationsQuery();
- * const [markAsRead] = useMarkNotificationAsReadMutation();
- */
 export const {
   useGetNotificationsQuery,
+  useGetNotificationSummaryQuery,
   useRegisterFCMTokenMutation,
   useDeactivateFCMTokenMutation,
   useMarkNotificationAsReadMutation,

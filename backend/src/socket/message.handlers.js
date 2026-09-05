@@ -10,12 +10,24 @@ import {
 } from "./presence.registry.js";
 import { markConversationAsRead } from "../services/message.service.js";
 
+const getCookieValue = (cookieHeader, name) => {
+  const cookie = cookieHeader
+    ?.split(";")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(`${name}=`));
+
+  if (!cookie) return null;
+
+  return decodeURIComponent(cookie.slice(name.length + 1));
+};
+
 export const authenticateSocket = async (socket, next) => {
   try {
     const token =
       socket.handshake.auth?.token ||
       socket.handshake.query?.token ||
-      socket.handshake.headers?.authorization?.replace("Bearer ", "");
+      socket.handshake.headers?.authorization?.replace("Bearer ", "") ||
+      getCookieValue(socket.handshake.headers?.cookie, "accessToken");
 
     if (!token) {
       return next(new Error("Authentication required"));
@@ -66,6 +78,10 @@ export const registerMessageHandlers = (io, socket) => {
     }
   });
 
+  socket.on("presence:request-sync", () => {
+    socket.emit("getOnlineUsers", getOnlineUserIds());
+  });
+
   socket.join(`user:${userId}`);
 };
 
@@ -73,13 +89,20 @@ export const handleUserConnect = async (io, socket) => {
   const userId = socket.userId;
   addUserSocket(userId, socket.id);
 
-  await User.findByIdAndUpdate(userId, {
-    lastSeen: new Date(),
-  });
+  const now = new Date();
+  await User.findByIdAndUpdate(userId, { lastSeen: now });
 
   const onlineUsers = getOnlineUserIds();
-  io.emit("presence:update", { userId, status: "online", lastSeen: new Date() });
-  io.emit("getOnlineUsers", onlineUsers); // backward compat
+
+  // Full snapshot only for the connecting client
+  socket.emit("getOnlineUsers", onlineUsers);
+
+  // Incremental update for everyone else
+  socket.broadcast.emit("presence:update", {
+    userId,
+    status: "online",
+    lastSeen: now.toISOString(),
+  });
 };
 
 export const handleUserDisconnect = async (io, socket) => {
@@ -90,7 +113,10 @@ export const handleUserDisconnect = async (io, socket) => {
   await User.findByIdAndUpdate(userId, { lastSeen });
 
   if (!getOnlineUserIds().includes(userId)) {
-    io.emit("presence:update", { userId, status: "offline", lastSeen });
-    io.emit("getOnlineUsers", getOnlineUserIds());
+    socket.broadcast.emit("presence:update", {
+      userId,
+      status: "offline",
+      lastSeen: lastSeen.toISOString(),
+    });
   }
 };

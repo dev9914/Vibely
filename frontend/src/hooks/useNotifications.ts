@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSelector } from 'react-redux';
 import { 
   requestNotificationPermission, 
   getFCMToken, 
@@ -9,6 +10,7 @@ import {
   useDeactivateFCMTokenMutation 
 } from '../services/notificationApi';
 import { toast } from 'sonner';
+import { selectUser } from '@/store/authSlice';
 
 interface UseNotificationsReturn {
   permission: NotificationPermission;
@@ -29,6 +31,13 @@ type FcmForegroundPayload = {
   fcmOptions?: {
     link?: string;
   };
+  data?: {
+    receiverId?: string;
+    title?: string;
+    body?: string;
+    link?: string;
+    [key: string]: string | undefined;
+  };
   [key: string]: unknown;
 };
 
@@ -43,6 +52,7 @@ type FcmForegroundPayload = {
  * - Deactivate token on logout
  */
 export const useNotifications = (): UseNotificationsReturn => {
+  const currentUser = useSelector(selectUser);
   const [permission, setPermission] = useState<NotificationPermission>(
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
@@ -164,23 +174,34 @@ export const useNotifications = (): UseNotificationsReturn => {
   const listenToForeground = useCallback((): void => {
     console.log('[useNotifications] listenToForeground() attaching listener');
 
-    onMessageListener((payload: FcmForegroundPayload) => {
+    const unsubscribe = onMessageListener((payload: FcmForegroundPayload) => {
       console.log('📬 Foreground notification received:', payload);
+
+      const receiverId = payload.data?.receiverId;
+      if (
+        receiverId &&
+        currentUser?._id &&
+        receiverId !== String(currentUser._id)
+      ) {
+        return;
+      }
       
       const title = payload.notification?.title || payload.data?.title || 'New Notification';
       const body = payload.notification?.body || payload.data?.body || '';
       
-      // Show toast notification
-      toast(title, {
-        description: body,
-        action: payload.fcmOptions?.link || payload.data?.link ? {
-          label: 'View',
-          onClick: () => {
-            window.location.href = (payload.fcmOptions?.link || payload.data?.link) as string || '/';
-          }
-        } : undefined,
-        duration: 5000,
-      });
+      // Socket.IO owns in-app toasts while the tab is active.
+      if (document.hidden) {
+        toast(title, {
+          description: body,
+          action: payload.fcmOptions?.link || payload.data?.link ? {
+            label: 'View',
+            onClick: () => {
+              window.location.href = (payload.fcmOptions?.link || payload.data?.link) as string || '/';
+            }
+          } : undefined,
+          duration: 5000,
+        });
+      }
 
       // Play notification sound (optional)
       try {
@@ -192,7 +213,9 @@ export const useNotifications = (): UseNotificationsReturn => {
         // Ignore sound errors
       }
     });
-  }, []);
+
+    return unsubscribe;
+  }, [currentUser?._id]);
 
   // Auto-register on mount if permission already granted
   useEffect(() => {

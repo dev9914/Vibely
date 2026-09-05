@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
+import type { Socket } from "socket.io-client";
+import { connectSocketWithAuth, disconnectSocket, getSocket, startSocket } from "@/lib/socket";
 import { SOCKET_EVENTS } from "@/lib/constants";
 import { messageApi, Message } from "@/services/messageApi";
 import { getMessageUserId, messageExistsInList } from "@/lib/messageUtils";
@@ -13,7 +14,7 @@ import {
   selectActiveChatUserId,
   selectActiveConversationId,
 } from "@/store/messagingSlice";
-import type { AppDispatch } from "@/store/store";
+import type { AppDispatch, RootState } from "@/store/store";
 
 /**
  * Global messaging socket — connects once on auth and keeps
@@ -28,8 +29,10 @@ export function useMessagingSocket() {
 
   const activeChatRef = useRef(activeChatUserId);
   const activeConversationRef = useRef(activeConversationId);
+  const currentUserRef = useRef(currentUser);
   activeChatRef.current = activeChatUserId;
   activeConversationRef.current = activeConversationId;
+  currentUserRef.current = currentUser;
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -38,10 +41,8 @@ export function useMessagingSocket() {
       return;
     }
 
-    const token = localStorage.getItem("token");
-    if (!token) return;
-
-    const socket = connectSocket(token);
+    let cancelled = false;
+    let socket: Socket | null = null;
 
     const markConversationRead = (conversationId: string) => {
       dispatch(
@@ -55,6 +56,36 @@ export function useMessagingSocket() {
     };
 
     const isChatOpenWith = (userId: string) => activeChatRef.current === userId;
+
+    const upsertIncomingMessage = (otherUserId: string, message: Message, conversationId: string) => {
+      dispatch((_, getState) => {
+        const state = getState() as RootState;
+        const cached = messageApi.endpoints.getMessages.select(otherUserId)(state);
+
+        if (cached?.data?.messages) {
+          dispatch(
+            messageApi.util.updateQueryData("getMessages", otherUserId, (draft) => {
+              if (!draft?.messages) return;
+              if (!messageExistsInList(draft.messages, message)) {
+                draft.messages.push(message);
+              }
+              if (!draft.conversationId) {
+                draft.conversationId = conversationId;
+              }
+            }),
+          );
+          return;
+        }
+
+        dispatch(
+          messageApi.util.upsertQueryData("getMessages", otherUserId, {
+            messages: [message],
+            hasMore: false,
+            conversationId,
+          }),
+        );
+      });
+    };
 
     const handleOnlineUsers = (users: string[]) => {
       dispatch(setOnlineUsers(users));
@@ -75,7 +106,7 @@ export function useMessagingSocket() {
       const message = payload.message;
       const senderId = getMessageUserId(message.senderId);
       const receiverId = getMessageUserId(message.receiverId);
-      const currentUserId = currentUser?._id;
+      const currentUserId = currentUserRef.current?._id;
 
       const otherUserId =
         senderId === currentUserId ? receiverId : senderId;
@@ -83,16 +114,8 @@ export function useMessagingSocket() {
       const chatOpenWithSender = isChatOpenWith(senderId);
       const isOwnMessage = senderId === currentUserId;
 
-      // Own messages are already handled by optimistic UI + HTTP response
       if (!isOwnMessage && otherUserId) {
-        dispatch(
-          messageApi.util.updateQueryData("getMessages", otherUserId, (draft) => {
-            if (!draft?.messages) return;
-            if (!messageExistsInList(draft.messages, message)) {
-              draft.messages.push(message);
-            }
-          }),
-        );
+        upsertIncomingMessage(otherUserId, message, payload.conversationId);
       }
 
       dispatch(
@@ -228,7 +251,10 @@ export function useMessagingSocket() {
           activeChatRef.current,
           (draft) => {
             draft?.messages?.forEach((msg) => {
-              if (getMessageUserId(msg.senderId) === currentUser?._id && msg.status !== "seen") {
+              if (
+                getMessageUserId(msg.senderId) === currentUserRef.current?._id &&
+                msg.status !== "seen"
+              ) {
                 msg.status = "seen";
                 msg.seenAt = payload.seenAt;
               }
@@ -267,26 +293,46 @@ export function useMessagingSocket() {
       dispatch(setTyping({ conversationId: payload.conversationId, userId: null }));
     };
 
-    socket.on(SOCKET_EVENTS.ONLINE_USERS, handleOnlineUsers);
-    socket.on(SOCKET_EVENTS.PRESENCE_UPDATE, handlePresence);
-    socket.on(SOCKET_EVENTS.MESSAGE_NEW, handleNewMessage);
-    socket.on(SOCKET_EVENTS.CONVERSATION_UPDATE, handleConversationUpdate);
-    socket.on(SOCKET_EVENTS.MESSAGE_DELIVERED, handleMessageDelivered);
-    socket.on(SOCKET_EVENTS.MESSAGE_SEEN, handleMessageSeen);
-    socket.on(SOCKET_EVENTS.MESSAGE_DELETE, handleMessageDelete);
-    socket.on(SOCKET_EVENTS.TYPING_START, handleTypingStart);
-    socket.on(SOCKET_EVENTS.TYPING_STOP, handleTypingStop);
+    const attachListeners = (activeSocket: Socket) => {
+      activeSocket.on(SOCKET_EVENTS.ONLINE_USERS, handleOnlineUsers);
+      activeSocket.on(SOCKET_EVENTS.PRESENCE_UPDATE, handlePresence);
+      activeSocket.on(SOCKET_EVENTS.MESSAGE_NEW, handleNewMessage);
+      activeSocket.on(SOCKET_EVENTS.CONVERSATION_UPDATE, handleConversationUpdate);
+      activeSocket.on(SOCKET_EVENTS.MESSAGE_DELIVERED, handleMessageDelivered);
+      activeSocket.on(SOCKET_EVENTS.MESSAGE_SEEN, handleMessageSeen);
+      activeSocket.on(SOCKET_EVENTS.MESSAGE_DELETE, handleMessageDelete);
+      activeSocket.on(SOCKET_EVENTS.TYPING_START, handleTypingStart);
+      activeSocket.on(SOCKET_EVENTS.TYPING_STOP, handleTypingStop);
+    };
+
+    const detachListeners = (activeSocket: Socket) => {
+      activeSocket.off(SOCKET_EVENTS.ONLINE_USERS, handleOnlineUsers);
+      activeSocket.off(SOCKET_EVENTS.PRESENCE_UPDATE, handlePresence);
+      activeSocket.off(SOCKET_EVENTS.MESSAGE_NEW, handleNewMessage);
+      activeSocket.off(SOCKET_EVENTS.CONVERSATION_UPDATE, handleConversationUpdate);
+      activeSocket.off(SOCKET_EVENTS.MESSAGE_DELIVERED, handleMessageDelivered);
+      activeSocket.off(SOCKET_EVENTS.MESSAGE_SEEN, handleMessageSeen);
+      activeSocket.off(SOCKET_EVENTS.MESSAGE_DELETE, handleMessageDelete);
+      activeSocket.off(SOCKET_EVENTS.TYPING_START, handleTypingStart);
+      activeSocket.off(SOCKET_EVENTS.TYPING_STOP, handleTypingStop);
+    };
+
+    const setup = async () => {
+      const connectedSocket = await connectSocketWithAuth();
+      if (cancelled || !connectedSocket) return;
+
+      socket = connectedSocket;
+      attachListeners(socket);
+      startSocket(socket);
+    };
+
+    void setup();
 
     return () => {
-      socket.off(SOCKET_EVENTS.ONLINE_USERS, handleOnlineUsers);
-      socket.off(SOCKET_EVENTS.PRESENCE_UPDATE, handlePresence);
-      socket.off(SOCKET_EVENTS.MESSAGE_NEW, handleNewMessage);
-      socket.off(SOCKET_EVENTS.CONVERSATION_UPDATE, handleConversationUpdate);
-      socket.off(SOCKET_EVENTS.MESSAGE_DELIVERED, handleMessageDelivered);
-      socket.off(SOCKET_EVENTS.MESSAGE_SEEN, handleMessageSeen);
-      socket.off(SOCKET_EVENTS.MESSAGE_DELETE, handleMessageDelete);
-      socket.off(SOCKET_EVENTS.TYPING_START, handleTypingStart);
-      socket.off(SOCKET_EVENTS.TYPING_STOP, handleTypingStop);
+      cancelled = true;
+      if (socket) {
+        detachListeners(socket);
+      }
     };
   }, [dispatch, isAuthenticated, currentUser?._id]);
 }

@@ -1,5 +1,12 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import type { BaseQueryFn, FetchArgs, FetchBaseQueryError } from '@reduxjs/toolkit/query';
+import { logout as logoutAuth } from '@/store/authSlice';
+import {
+  clearAccessToken,
+  refreshAccessToken as refreshAccessTokenFromAuth,
+} from '@/lib/authToken';
+import { disconnectSocket, updateSocketAuth } from '@/lib/socket';
+import { getApiBaseUrl } from '@/lib/apiConfig';
 
 /**
  * Base RTK Query API Configuration
@@ -18,62 +25,20 @@ let isRefreshing = false;
 let refreshPromise: Promise<boolean> | null = null;
 
 const baseQuery = fetchBaseQuery({
-  baseUrl: import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1',
-  credentials: 'include', // Include cookies for httpOnly tokens
-  prepareHeaders: (headers) => {
-    // Inject authentication token from localStorage with Bearer prefix
-    const token = localStorage.getItem('token');
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
-    }
-    return headers;
-  },
+  baseUrl: getApiBaseUrl(),
+  credentials: 'include',
 });
 
 /**
  * Attempt to refresh the access token
  */
 const refreshToken = async (): Promise<boolean> => {
-  try {
-    const storedRefreshToken = localStorage.getItem('refreshToken');
-    if (!storedRefreshToken) {
-      return false;
-    }
-
-    const response = await fetch(
-      `${import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1'}/users/refresh-token`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: storedRefreshToken }),
-        credentials: 'include',
-      }
-    );
-
-    if (response.ok) {
-      const data = await response.json();
-      if (data.data?.accessToken) {
-        localStorage.setItem('token', data.data.accessToken);
-        if (data.data.refreshToken) {
-          localStorage.setItem('refreshToken', data.data.refreshToken);
-        }
-        return true;
-      }
-    }
-    return false;
-  } catch {
-    return false;
+  const token = await refreshAccessTokenFromAuth();
+  if (token) {
+    updateSocketAuth(token);
+    return true;
   }
-};
-
-/**
- * Clear all auth data and redirect to login
- */
-const clearAuthAndRedirect = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('refreshToken');
-  localStorage.removeItem('tokenExpiry');
-  window.location.href = '/signin';
+  return false;
 };
 
 /**
@@ -97,7 +62,9 @@ const baseQueryWithReauth: BaseQueryFn<
     }
 
     if (!refreshPromise) {
-      clearAuthAndRedirect();
+      clearAccessToken();
+      disconnectSocket();
+      api.dispatch(logoutAuth());
       return result;
     }
 
@@ -106,7 +73,9 @@ const baseQueryWithReauth: BaseQueryFn<
     if (refreshSuccess) {
       result = await baseQuery(args, api, extraOptions);
     } else {
-      clearAuthAndRedirect();
+      clearAccessToken();
+      disconnectSocket();
+      api.dispatch(logoutAuth());
     }
   }
 
@@ -145,7 +114,7 @@ const baseQueryWithExtraction = async (args: any, api: any, extraOptions: any) =
 export const api = createApi({
   reducerPath: 'api',
   baseQuery: baseQueryWithExtraction,
-  tagTypes: ['Post', 'User', 'Comment', 'Notification', 'Message', 'Conversation'],
+  tagTypes: ['Post', 'User', 'Comment', 'Notification', 'Message', 'Conversation', 'Story', 'Explore'],
   endpoints: () => ({}), // Endpoints will be injected by specific API services
 });
 

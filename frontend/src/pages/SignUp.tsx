@@ -95,11 +95,9 @@ const SignUp = () => {
 
       const result = await register(formData).unwrap()
 
-      if (result?.accessToken && result?.user) {
+      if (result?.user) {
         dispatch(setCredentials({
           user: result.user,
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
         }))
 
         toast('Account created', {

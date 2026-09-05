@@ -1,26 +1,27 @@
 import { GoogleGenAI } from "@google/genai";
-import path from "path";
-import { fileURLToPath } from "url";
-import dotenv from "dotenv";
+import "../src/config/env.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const apiKey = process.env.GEMINI_API_KEY;
 
-dotenv.config({
-  path: path.resolve(__dirname, "../.env"),
-});
+if (!apiKey) {
+  throw new Error("GEMINI_API_KEY is missing");
+}
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY
-});
+const ai = new GoogleGenAI({ apiKey });
 
 async function test() {
   const response = await ai.models.generateContent({
-    model: "gemini-flash-latest",
-    contents: "Say hello.",
+    model: "gemini-3.6-flash",
+    contents: "Reply with exactly: Gemini connection works",
   });
 
   console.log(response.text);
 }
 
-test().catch(console.error);
+test().catch((error) => {
+  console.error("Gemini test failed:", {
+    status: error?.status,
+    message: error?.message,
+  });
+  process.exitCode = 1;
+});

@@ -4,7 +4,6 @@ import { useDispatch } from 'react-redux'
 import {
   Home,
   Search,
-  Compass,
   Film,
   MessageCircle,
   Bell,
@@ -16,6 +15,7 @@ import {
   Heart,
   ChevronLeft,
   ChevronRight,
+  Bookmark,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -35,7 +35,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import NotificationPanel from '@/components/notifications/NotificationPanel'
-import { useGetNotificationsQuery } from '@/services/notificationApi'
+import { useGetNotificationSummaryQuery } from '@/services/notificationApi'
 import { useGetUnreadCountQuery } from '@/services/messageApi'
 import { openCreatePostModal } from '@/store/uiSlice'
 import { useLogout } from '@/hooks/useLogout'
@@ -69,7 +69,7 @@ const Sidebar = ({ user, collapsed = false, onCollapsedChange }: SidebarProps) =
   const [isNotificationOpen, setIsNotificationOpen] = useState(false)
 
   // Get unread count for notification badge
-  const { data: notificationData } = useGetNotificationsQuery(undefined, {
+  const { data: notificationData } = useGetNotificationSummaryQuery(undefined, {
     pollingInterval: 30000,
   })
   const unreadCount = notificationData?.unreadCount || 0
@@ -86,11 +86,11 @@ const Sidebar = ({ user, collapsed = false, onCollapsedChange }: SidebarProps) =
   const navItems: NavItem[] = [
     { icon: Home, label: 'Home', href: '/' },
     { icon: Search, label: 'Search', href: '/search' },
-    { icon: Compass, label: 'Explore', href: '/explore' },
     { icon: Film, label: 'Reels', href: '/reels' },
     { icon: MessageCircle, label: 'Messages', href: '/messages', badgeCount: messageUnreadCount },
     { icon: Bell, label: 'Notifications', isNotification: true, onClick: () => setIsNotificationOpen(true) },
     { icon: PlusSquare, label: 'Create', onClick: () => dispatch(openCreatePostModal()) },
+    { icon: Bookmark, label: 'Saved', href: '/saved' },
   ]
 
   const isActive = (href?: string) => {

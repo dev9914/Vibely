@@ -14,10 +14,13 @@ export { default as postApi } from './postApi';
 export { default as userApi } from './userApi';
 export { default as aiApi } from './aiApi';
 export { default as messageApi } from './messageApi';
+export { default as storyApi } from './storyApi';
+export { default as exploreApi } from './exploreApi';
 
 // Notification API
 export {
   useGetNotificationsQuery,
+  useGetNotificationSummaryQuery,
   useRegisterFCMTokenMutation,
   useDeactivateFCMTokenMutation,
   useMarkNotificationAsReadMutation,
@@ -27,8 +30,10 @@ export {
 } from './notificationApi';
 
 export type {
+  NotificationActor,
   Notification,
   NotificationsResponse,
+  NotificationSummaryResponse,
   RegisterTokenRequest,
   RegisterTokenResponse,
 } from './notificationApi';
@@ -53,6 +58,26 @@ export type {
   CreatePostRequest,
   CommentRequest,
 } from './postApi';
+
+// Explore API
+export {
+  useGetExploreQuery,
+  useSearchUsersQuery,
+  useSearchPostsQuery,
+  useSearchHashtagsQuery,
+} from './exploreApi';
+
+export type {
+  ExploreAuthor,
+  ExplorePost,
+  ExploreUser,
+  HashtagItem,
+  ExplorePostsResponse,
+  ExplorePeopleResponse,
+  SearchPostsResponse,
+  SearchUsersResponse,
+  SearchHashtagsResponse,
+} from './exploreApi';
 
 // User API
 export {
@@ -111,3 +136,21 @@ export type {
   SendMessageRequest,
   SendMessageResponse,
 } from './messageApi';
+
+// Story API
+export {
+  useGetStoriesFeedQuery,
+  useGetUserStoriesQuery,
+  useCreateStoryMutation,
+  useDeleteStoryMutation,
+  useMarkStoryViewedMutation,
+} from './storyApi';
+
+export type {
+  StoryMedia,
+  StoryUser,
+  StoryItem,
+  StoryGroup,
+  StoriesFeedResponse,
+  UserStoriesResponse,
+} from './storyApi';

@@ -1,7 +1,7 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useSelector } from "react-redux";
-import { selectIsAuthenticated } from "../store/authSlice";
 import { Loader2 } from "lucide-react";
+import { selectIsAuthenticated, selectIsLoading } from "../store/authSlice";
 
 interface ProtectedRouteProps {
     children: React.ReactNode;
@@ -21,35 +21,24 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 }) => {
     const location = useLocation();
     const isAuthenticated = useSelector(selectIsAuthenticated);
-    
-    // Also check localStorage as backup
-    const hasToken = (): boolean => {
-        const token = localStorage.getItem("token");
-        const tokenExpiry = localStorage.getItem("tokenExpiry");
+    const isLoading = useSelector(selectIsLoading);
 
-        if (token && tokenExpiry) {
-            if (Date.now() > parseInt(tokenExpiry)) {
-                // Token expired, clear storage
-                localStorage.removeItem("token");
-                localStorage.removeItem("refreshToken");
-                localStorage.removeItem("tokenExpiry");
-                return false;
-            }
-            return true;
-        }
-        return !!token;
-    };
-
-    const isLoggedIn = isAuthenticated || hasToken();
+    if (isLoading) {
+        return (
+            <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+        );
+    }
 
     // Protected route - user must be authenticated
-    if (requireAuth && !isLoggedIn) {
+    if (requireAuth && !isAuthenticated) {
         // Save the attempted location for redirect after login
         return <Navigate to="/signin" state={{ from: location }} replace />;
     }
 
     // Guest-only route - user must NOT be authenticated
-    if (!requireAuth && isLoggedIn) {
+    if (!requireAuth && isAuthenticated) {
         // Redirect to home if already logged in
         return <Navigate to="/" replace />;
     }

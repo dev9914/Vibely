@@ -39,10 +39,10 @@ export const isUserOnline = (userId) =>
 export const getOnlineUserIds = () => Array.from(userSockets.keys());
 
 export const emitToUser = (io, userId, event, payload) => {
-  const socketIds = getUserSocketIds(userId?.toString());
-  for (const socketId of socketIds) {
-    io.to(socketId).emit(event, payload);
-  }
+  const normalizedUserId = userId?.toString();
+  if (!normalizedUserId) return;
+
+  io.to(`user:${normalizedUserId}`).emit(event, payload);
 };
 
 export const setTyping = (conversationId, userId, callback, timeoutMs = 3000) => {
