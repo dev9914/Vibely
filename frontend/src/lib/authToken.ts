@@ -11,12 +11,17 @@ import { getApiBaseUrl } from "@/lib/apiConfig";
 const API_URL = getApiBaseUrl();
 
 const TOKEN_STORAGE_KEY = 'token';
+const REFRESH_TOKEN_STORAGE_KEY = 'refreshToken';
 
 // Hydrate from localStorage on module init (cross-tab / reload persistence)
 let accessToken: string | null =
   typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null;
 
+let refreshToken: string | null =
+  typeof window !== 'undefined' ? window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) : null;
+
 export const getAccessToken = (): string | null => accessToken;
+export const getRefreshToken = (): string | null => refreshToken;
 
 export const setAccessToken = (token: string | null): void => {
   accessToken = token;
@@ -29,10 +34,23 @@ export const setAccessToken = (token: string | null): void => {
   }
 };
 
+export const setRefreshToken = (token: string | null): void => {
+  refreshToken = token;
+  if (typeof window !== 'undefined') {
+    if (token) {
+      window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token);
+    } else {
+      window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+    }
+  }
+};
+
 export const clearAccessToken = (): void => {
   accessToken = null;
+  refreshToken = null;
   if (typeof window !== 'undefined') {
     window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
   }
 };
 
@@ -103,7 +121,6 @@ export const refreshAccessToken = async (): Promise<string | null> => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      // Send refreshToken in body as fallback for browsers/users that block 3rd-party cross-site cookies
       body: bodyRt ? JSON.stringify({ refreshToken: bodyRt }) : undefined,
     });
 
@@ -113,9 +130,12 @@ export const refreshAccessToken = async (): Promise<string | null> => {
     }
 
     const json = await response.json();
-    const token = extractAccessToken(json?.data ?? json);
+    const data = json?.data ?? json;
+    const token = extractAccessToken(data);
+    const rt = extractRefreshToken(data);
     if (token) {
       setAccessToken(token);
+      if (rt) setRefreshToken(rt);
       return token;
     }
 
