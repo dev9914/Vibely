@@ -3,6 +3,7 @@ import type { BaseQueryFn, FetchArgs, FetchBaseQueryError } from '@reduxjs/toolk
 import { logout as logoutAuth } from '@/store/authSlice';
 import {
   clearAccessToken,
+  getAccessToken,
   refreshAccessToken as refreshAccessTokenFromAuth,
 } from '@/lib/authToken';
 import { disconnectSocket, updateSocketAuth } from '@/lib/socket';
@@ -27,6 +28,16 @@ let refreshPromise: Promise<boolean> | null = null;
 const baseQuery = fetchBaseQuery({
   baseUrl: getApiBaseUrl(),
   credentials: 'include',
+  prepareHeaders: (headers) => {
+    // Per project memory: prioritize localStorage.token over in-memory/Redux state
+    // to avoid 401 loops during refresh cycles.
+    const tokenFromStorage = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null;
+    const token = tokenFromStorage || getAccessToken();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    return headers;
+  },
 });
 
 /**
